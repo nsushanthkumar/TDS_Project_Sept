@@ -1,7 +1,22 @@
+from __future__ import annotations
+
 from typing import Dict, Optional
 
-from .config import get_openai_client, get_fallback_client
-from .file_handler import process_all_attachments
+from openai import OpenAI
+from app.infra.settings import get_settings
+from app.services.providers.utils_attachments import process_all_attachments
+
+
+def _primary_client() -> OpenAI:
+    s = get_settings()
+    return OpenAI(api_key=s.openai_api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+
+
+def _fallback_client() -> Optional[OpenAI]:
+    s = get_settings()
+    if not s.aipipe_aki_key:
+        return None
+    return OpenAI(api_key=s.aipipe_aki_key, base_url=s.fallback_base_url)
 
 
 def generate_app_code(
@@ -11,7 +26,7 @@ def generate_app_code(
     existing_code: Optional[str] = None,
     round_num: int = 1,
 ) -> Dict[str, str]:
-    client = get_openai_client()
+    client = _primary_client()
 
     attachments_info = process_all_attachments(attachments)
     checks = checks or []
@@ -46,24 +61,20 @@ Return ONLY the complete HTML code with no explanations, no comments, no markdow
         response = client.chat.completions.create(
             model="gemini-2.5-flash",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert web developer. Generate clean, functional, production-ready HTML applications that pass all specified checks.",
-                },
+                {"role": "system", "content": "You are an expert web developer. Generate clean, functional, production-ready HTML applications that pass all specified checks."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.7,
         )
         html_content = response.choices[0].message.content
     except Exception:
-        fallback_client = get_fallback_client()
-        response = fallback_client.chat.completions.create(
+        fb = _fallback_client()
+        if not fb:
+            raise
+        response = fb.chat.completions.create(
             model="gpt-4",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert web developer. Generate clean, functional, production-ready HTML applications that pass all specified checks.",
-                },
+                {"role": "system", "content": "You are an expert web developer. Generate clean, functional, production-ready HTML applications that pass all specified checks."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.7,
@@ -71,7 +82,6 @@ Return ONLY the complete HTML code with no explanations, no comments, no markdow
         html_content = response.choices[0].message.content
 
     if html_content is None:
-        print("No HTML content generated.")
         return {"index.html": ""}
 
     if "```html" in html_content:
@@ -83,7 +93,7 @@ Return ONLY the complete HTML code with no explanations, no comments, no markdow
 
 
 def generate_readme(task: str, brief: str, repo_url: str, pages_url: str) -> str:
-    client = get_openai_client()
+    client = _primary_client()
 
     prompt = f"""Generate a professional README.md for this project:
 
@@ -106,24 +116,20 @@ Make it clear, professional, and well-structured with proper markdown formatting
         response = client.chat.completions.create(
             model="gemini-2.5-flash",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert at writing professional technical documentation.",
-                },
+                {"role": "system", "content": "You are an expert at writing professional technical documentation."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.7,
         )
         readme_content = response.choices[0].message.content
     except Exception:
-        fallback_client = get_fallback_client()
-        response = fallback_client.chat.completions.create(
+        fb = _fallback_client()
+        if not fb:
+            raise
+        response = fb.chat.completions.create(
             model="gpt-4",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert at writing professional technical documentation.",
-                },
+                {"role": "system", "content": "You are an expert at writing professional technical documentation."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.7,
@@ -131,7 +137,6 @@ Make it clear, professional, and well-structured with proper markdown formatting
         readme_content = response.choices[0].message.content
 
     if readme_content is None:
-        print("No README content generated.")
         return ""
 
     if "```markdown" in readme_content:
@@ -140,3 +145,4 @@ Make it clear, professional, and well-structured with proper markdown formatting
         readme_content = readme_content.split("```")[1].split("```")[0].strip()
 
     return readme_content
+
